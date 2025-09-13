@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>민채의 금융 대시보드</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN for charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .card-details {
+            transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+        }
+        .card-details.visible {
+            max-height: 200px; /* Adjust as needed */
+            opacity: 1;
+        }
+        
+        /* Ensure the main container fills the viewport on tablets and larger screens */
+        @media (min-width: 768px) {
+            .main-container {
+                max-width: 100%;
+                width: 100%;
+                min-height: 100vh;
+                padding: 2rem 4rem;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 md:p-12 lg:p-16">
+
+    <!-- Main Container -->
+    <div class="main-container max-w-full md:max-w-6xl mx-auto bg-white p-6 md:p-10 rounded-3xl shadow-xl">
+
+        <!-- Header Section -->
+        <header class="mb-8 md:mb-12 text-center relative">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">민채의 투자 현황</h1>
+            <p class="text-gray-500">실시간 포트폴리오 현황</p>
+            <!-- Fullscreen button -->
+            <button id="fullscreen-button" class="absolute top-0 right-0 mt-2 mr-2 bg-gray-200 text-gray-600 p-2 rounded-lg text-sm font-semibold hover:bg-gray-300 transition-colors">
+                전체 화면
+            </button>
+        </header>
+
+        <!-- Placeholder for Data Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 md:mb-12">
+            <!-- Total Value Card -->
+            <div class="bg-indigo-600 text-white p-6 rounded-2xl shadow-lg transform transition-transform hover:scale-105">
+                <p class="text-sm font-semibold opacity-80">총 포트폴리오 가치</p>
+                <p id="total-value" class="text-3xl font-extrabold mt-2">₩0</p>
+            </div>
+            <!-- Total Profit/Loss Card -->
+            <div class="bg-gray-800 text-white p-6 rounded-2xl shadow-lg transform transition-transform hover:scale-105">
+                <p class="text-sm font-semibold opacity-80">총 손익</p>
+                <p id="total-profit-loss" class="text-3xl font-extrabold mt-2">₩0</p>
+            </div>
+        </div>
+
+        <!-- Investment Details Section -->
+        <section>
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">보유 자산</h2>
+            <div id="holdings-container" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Investment cards will be injected here by JavaScript -->
+            </div>
+        </section>
+
+        <!-- Chart Section -->
+        <section class="mt-8 md:mt-12">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4 text-center">자산별 투자 성과</h2>
+            <div class="bg-white p-6 rounded-2xl shadow-lg">
+                <canvas id="investment-chart"></canvas>
+            </div>
+        </section>
+
+        <!-- Cash Card -->
+        <div class="bg-blue-100 p-6 rounded-2xl shadow-inner mt-6">
+            <h3 class="text-xl font-bold text-gray-700">현금 자산</h3>
+            <p id="cash-value" class="text-3xl font-extrabold mt-2 text-blue-700">₩0</p>
+        </div>
+
+        <!-- Loading & Error Indicator -->
+        <div id="status-message" class="text-center mt-8 text-gray-500">
+            데이터를 불러오는 중입니다...
+        </div>
+
+    </div>
+
+    <script>
+        // Use a public CSV URL from a Google Sheet.
+        // NOTE: Make sure this URL is correct and the Google Sheet is set to 'Public'.
+        const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQnDFQqH68Ig8YVehCQj7yfKGIea3OX3L2RlQ8cDGITWE-gKZ0ksp_w5phw0SjD34xS7nLC2mqa0_3T/pub?gid=1919078711&single=true&output=csv";
+
+        // 현재 보유 중인 자산 데이터
+        const investments = [
+            {
+                name: '글로벌 우주기술 & 방산 (주식)',
+                fund_cd: 'K55101E11251',
+                quantity: 5732516,
+                purchasePrice: 1855,
+                currentPrice: 0
+            },
+            {
+                name: '로보테크(주식)',
+                fund_cd: 'K55207BV6083',
+                quantity: 5788866,
+                purchasePrice: 1727,
+                currentPrice: 0
+            },
+            {
+                name: '전략 배분 TDF(주식)',
+                fund_cd: 'K55301BM7905',
+                quantity: 8482880,
+                purchasePrice: 1179,
+                currentPrice: 0
+            }
+        ];
+
+        // 보유 현금
+        const cash = 503107;
+        const statusMessageEl = document.getElementById('status-message');
+
+        // Helper function to format large numbers to "MM" (Million) unit
+        function formatNumberToMM(number) {
+            const roundedNumber = Math.round(number / 10000) / 100;
+            return `₩${roundedNumber.toFixed(2)} MM`;
+        }
+
+        // CSV URL에서 데이터를 가져와 파싱하는 함수
+        async function fetchDataFromGoogleSheetsCSV() {
+            statusMessageEl.textContent = '데이터를 불러오는 중입니다...';
+            statusMessageEl.style.color = '#6b7280';
+            statusMessageEl.style.display = 'block';
+
+            try {
+                const response = await fetch(CSV_URL);
+                if (!response.ok) {
+                    throw new Error(`네트워크 오류가 발생했습니다: ${response.statusText}. CSV URL을 확인해 주세요.`);
+                }
+                const csvText = await response.text();
+                // Raw CSV text를 콘솔에 출력하여 디버깅에 도움을 줍니다.
+                console.log("Raw CSV data from Google Sheet:", csvText);
+
+                // CSV 데이터 파싱 (줄바꿈으로 행을 구분)
+                const rows = csvText.trim().split('\n');
+                
+                if (rows.length <= 1) { // 헤더 행만 있거나 데이터가 없는 경우
+                    throw new Error("스프레드시트에 데이터가 없거나 형식이 올바르지 않습니다.");
+                }
+
+                // 가장 최근 데이터 행만 추출. (마지막 3개 행)
+                const latestDataRows = rows.slice(-3);
+
+                // investments 배열에 현재가 업데이트
+                const updatedInvestments = investments.map(investment => {
+                    // 각 투자 항목에 맞는 행을 찾습니다.
+                    const matchingRow = latestDataRows.find(row => row.includes(investment.fund_cd));
+                    
+                    if (matchingRow) {
+                        const columns = matchingRow.split(',');
+                        // CSV의 5번째 열(인덱스 4)에 있는 Base Price 값을 가져옵니다.
+                        const price = parseFloat(columns[4]);
+                        
+                        // 숫자가 유효한지 확인합니다.
+                        if (!isNaN(price)) {
+                            investment.currentPrice = price;
+                        } else {
+                            console.warn(`경고: '${investment.name}' 펀드의 가격 데이터가 숫자가 아닙니다.`);
+                        }
+                    } else {
+                        console.warn(`경고: '${investment.name}' 펀드에 대한 데이터를 스프레드시트에서 찾을 수 없습니다.`);
+                    }
+                    return investment;
+                });
+                
+                // investments 배열을 업데이트된 배열로 교체
+                Object.assign(investments, updatedInvestments);
+
+                renderHoldings();
+                renderChart();
+                statusMessageEl.style.display = 'none';
+
+            } catch (error) {
+                console.error("데이터를 가져오는 중 오류가 발생했습니다:", error);
+                const errorMsg = `오류 발생: '${error.message}'. 이 오류는 파일을 로컬 웹 서버(예: http://localhost)에서 실행하지 않았을 때 발생합니다.`;
+                statusMessageEl.textContent = errorMsg;
+                statusMessageEl.style.color = '#dc2626';
+            }
+        }
+
+        // 투자 자산 카드들을 페이지에 렌더링하는 함수
+        function renderHoldings() {
+            const container = document.getElementById('holdings-container');
+            container.innerHTML = '';
+            let totalPortfolioValue = cash;
+            let totalProfitLoss = 0;
+
+            investments.forEach(investment => {
+                // 수량을 1000으로 나누어 정확한 값을 계산합니다. (1000배 오류 수정)
+                const realQuantity = investment.quantity / 1000;
+                const profitLoss = (investment.currentPrice - investment.purchasePrice) * realQuantity;
+                const currentValue = investment.currentPrice * realQuantity;
+                const profitLossClass = profitLoss >= 0 ? 'text-green-500' : 'text-red-500';
+                const profitLossSign = profitLoss >= 0 ? '+' : '';
+
+                totalPortfolioValue += currentValue;
+                totalProfitLoss += profitLoss;
+
+                const card = document.createElement('div');
+                card.className = 'bg-gray-100 p-6 rounded-xl shadow-inner cursor-pointer transition-all duration-300 transform hover:scale-105';
+                
+                card.innerHTML = `
+                    <h3 class="text-xl font-bold text-gray-700">${investment.name}</h3>
+                    <div class="mt-4 grid grid-cols-2 gap-4 text-sm font-medium">
+                        <div>
+                            <p class="text-gray-500">현재가</p>
+                            <p id="current-price-${investment.fund_cd}" class="font-bold text-gray-800">${formatNumberToMM(currentValue)}</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-500">현재 손익</p>
+                            <p id="profit-loss-${investment.fund_cd}" class="font-bold ${profitLossClass}">
+                                ${profitLossSign}${formatNumberToMM(Math.abs(profitLoss))}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="card-details mt-4 text-sm font-medium">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <p class="text-gray-500">수량</p>
+                                <p class="font-bold text-gray-800">${realQuantity.toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <p class="text-gray-500">평단가</p>
+                                <p class="font-bold text-gray-800">₩${investment.purchasePrice.toLocaleString()}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+
+                // Add click event listener to the card
+                card.addEventListener('click', () => {
+                    const details = card.querySelector('.card-details');
+                    details.classList.toggle('visible');
+                });
+            });
+
+            // 총 가치 및 총 손익 카드 업데이트
+            document.getElementById('total-value').textContent = formatNumberToMM(totalPortfolioValue);
+            const totalProfitLossEl = document.getElementById('total-profit-loss');
+            totalProfitLossEl.textContent = `${totalProfitLoss >= 0 ? '+' : ''}${formatNumberToMM(Math.abs(totalProfitLoss))}`;
+            totalProfitLossEl.parentElement.style.backgroundColor = totalProfitLoss >= 0 ? '#10B981' : '#EF4444'; // 초록색 또는 빨간색
+            
+            // 현금 가치 업데이트
+            document.getElementById('cash-value').textContent = formatNumberToMM(cash);
+        }
+
+        let myChart = null;
+
+        function renderChart() {
+            const chartCanvas = document.getElementById('investment-chart');
+            const labels = investments.map(inv => inv.name);
+            const initialValues = investments.map(inv => Math.round((inv.quantity / 1000) * inv.purchasePrice));
+            const currentValues = investments.map(inv => Math.round((inv.quantity / 1000) * inv.currentPrice));
+
+            const chartData = {
+                labels: labels,
+                datasets: [
+                    {
+                        label: '초기 투자금',
+                        data: initialValues,
+                        backgroundColor: 'rgba(59, 130, 246, 0.8)', // Blue
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: '현재 가치',
+                        data: currentValues,
+                        backgroundColor: 'rgba(16, 185, 129, 0.8)', // Green
+                        borderColor: 'rgba(16, 185, 129, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            };
+
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '₩ (단위)'
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return formatNumberToMM(value);
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += formatNumberToMM(context.parsed.y);
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Destroy the old chart instance before creating a new one
+            if (myChart) {
+                myChart.destroy();
+            }
+            
+            myChart = new Chart(chartCanvas, {
+                type: 'bar',
+                data: chartData,
+                options: chartOptions
+            });
+        }
+
+        // 전체 화면 모드로 전환하는 함수
+        function enterFullscreen() {
+            try {
+                // Check if fullscreen is supported by the browser
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen();
+                } else if (document.documentElement.webkitRequestFullscreen) { /* Safari, Chrome, and Opera */
+                    document.documentElement.webkitRequestFullscreen();
+                } else if (document.documentElement.msRequestFullscreen) { /* IE11 */
+                    document.documentElement.msRequestFullscreen();
+                }
+            } catch (error) {
+                // Display a user-friendly message if fullscreen is not supported
+                const errorMsg = '전체 화면 기능은 현재 환경에서 지원되지 않습니다. 파일을 다운로드하여 웹 서버에서 실행해 주세요.';
+                
+                // Display the error message in the status div
+                const statusMessageEl = document.getElementById('status-message');
+                if (statusMessageEl) {
+                    statusMessageEl.textContent = errorMsg;
+                    statusMessageEl.style.color = '#dc2626';
+                    statusMessageEl.style.display = 'block';
+                }
+
+                console.error('전체 화면 전환 중 오류 발생:', error);
+            }
+        }
+
+        // 페이지 로드 시 데이터 로드
+        window.onload = function() {
+            // '전체 화면' 버튼에 클릭 이벤트 리스너를 추가
+            document.getElementById('fullscreen-button').addEventListener('click', enterFullscreen);
+
+            // fetchDataFromGoogleSheetsCSV 함수를 초기 호출
+            fetchDataFromGoogleSheetsCSV();
+        }
+
+    </script>
+</body>
+</html>
